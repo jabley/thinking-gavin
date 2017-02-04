@@ -1,1 +1,1 @@
-web: python thinking_gavin.py 
+web: thinking_gavin
