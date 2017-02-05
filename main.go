@@ -28,7 +28,7 @@ type payload struct {
 }
 
 type errorInfo struct {
-	Id     string   `json:"id,omitempty"`
+	ID     string   `json:"id,omitempty"`
 	HREF   string   `json:"href,omitempty"`
 	Status string   `json:"status,omitempty"`
 	Code   string   `json:"code,omitempty"`
@@ -42,6 +42,8 @@ type errorResponse struct {
 	Errors []errorInfo `json:"errors,omitempty"`
 }
 
+// ErrBadRequest is used to report when the client hasn't called the service
+// correctly. Think of it as 'usage' for a web service.
 var ErrBadRequest = errors.New("Bad request - no text provided")
 
 func main() {
@@ -138,7 +140,7 @@ func mainHandlerFor(username, password string, client *http.Client) http.Handler
 			return
 		}
 
-		renderSuccess(w, NewPayload(imageURL))
+		renderSuccess(w, newPayload(imageURL))
 	}
 }
 
@@ -172,7 +174,7 @@ func writeStatus(w http.ResponseWriter, status int) {
 func parseImageID(r *http.Request) string {
 	imageID := "16191858"
 
-	parts := Filter(strings.Split(r.URL.Path, "/"), func(s string) bool {
+	parts := filter(strings.Split(r.URL.Path, "/"), func(s string) bool {
 		return s != ""
 	})
 
@@ -183,8 +185,8 @@ func parseImageID(r *http.Request) string {
 	return imageID
 }
 
-func Filter(parts []string, fn func(string) bool) []string {
-	res := make([]string, 0)
+func filter(parts []string, fn func(string) bool) []string {
+	var res []string
 	for _, s := range parts {
 		if fn(s) {
 			res = append(res, s)
@@ -235,10 +237,10 @@ func getImageURL(ctxt context.Context, client *http.Client, username, password, 
 		}
 	}
 
-	return nil, errors.New(fmt.Sprintf("Unable to parse response JSON - %#v", doc))
+	return nil, fmt.Errorf("Unable to parse response JSON - %#v", doc)
 }
 
-func NewPayload(imageURL *string) *payload {
+func newPayload(imageURL *string) *payload {
 	return &payload{
 		ResponseType: "in_channel",
 		Attachments: []attachment{
