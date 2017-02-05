@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,20 +11,38 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 )
 
-type Attachment struct {
+type attachment struct {
 	Text     string `json:"text"`
 	ImageURL string `json:"image_url"`
 }
 
-type Payload struct {
+type payload struct {
 	ResponseType string       `json:"response_type"`
-	Attachments  []Attachment `json:"attachments,omitempty"`
+	Attachments  []attachment `json:"attachments,omitempty"`
 }
+
+type errorInfo struct {
+	Id     string   `json:"id,omitempty"`
+	HREF   string   `json:"href,omitempty"`
+	Status string   `json:"status,omitempty"`
+	Code   string   `json:"code,omitempty"`
+	Title  string   `json:"title,omitempty"`
+	Detail string   `json:"detail,omitempty"`
+	Links  []string `json:"links,omitempty"`
+	Path   string   `json:"path,omitempty"`
+}
+
+type errorResponse struct {
+	Errors []errorInfo `json:"errors,omitempty"`
+}
+
+var ErrBadRequest = errors.New("Bad request - no text provided")
 
 func main() {
 	flag.Parse()
@@ -85,9 +104,12 @@ func getDefaultConfig(name, fallback string) string {
 // Handles `POST /` and `POST /imageID[/]`
 func mainHandlerFor(username, password string, client *http.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctxt, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
 		err := r.ParseForm()
 		if err != nil {
-			w.WriteHeader(400)
+			renderError(w, 400, ErrBadRequest)
 			return
 		}
 
@@ -96,7 +118,7 @@ func mainHandlerFor(username, password string, client *http.Client) http.Handler
 		text := r.Form.Get("text")
 
 		if text == "" {
-			w.WriteHeader(400)
+			renderError(w, 400, ErrBadRequest)
 			return
 		}
 
@@ -109,21 +131,42 @@ func mainHandlerFor(username, password string, client *http.Client) http.Handler
 			text1 = args[1]
 		}
 
-		imageURL, err := getImageURL(client, username, password, imageID, text0, text1)
+		imageURL, err := getImageURL(ctxt, client, username, password, imageID, text0, text1)
 
 		if err != nil {
-			w.WriteHeader(500)
-			w.Write([]byte(err.Error()))
+			renderError(w, 500, err)
 			return
 		}
 
-		payload := NewPayload(imageURL)
-
-		w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-		w.Header().Set("Cache-Control", "private, no-cache, no-store, must-revalidate")
-
-		json.NewEncoder(w).Encode(payload)
+		renderSuccess(w, NewPayload(imageURL))
 	}
+}
+
+func renderSuccess(w http.ResponseWriter, payload *payload) {
+	writeStatus(w, 200)
+	writeJSON(w, payload)
+}
+
+func renderError(w http.ResponseWriter, status int, err error) {
+	writeStatus(w, status)
+	writeJSON(w, &errorResponse{
+		Errors: []errorInfo{
+			{
+				Detail: err.Error(),
+				Status: strconv.Itoa(status),
+			},
+		},
+	})
+}
+
+func writeJSON(w http.ResponseWriter, JSON interface{}) {
+	json.NewEncoder(w).Encode(JSON)
+}
+
+func writeStatus(w http.ResponseWriter, status int) {
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.Header().Set("Cache-Control", "private, no-cache, no-store, must-revalidate")
+	w.WriteHeader(status)
 }
 
 func parseImageID(r *http.Request) string {
@@ -150,7 +193,7 @@ func Filter(parts []string, fn func(string) bool) []string {
 	return res
 }
 
-func getImageURL(client *http.Client, username, password, imageID, text0, text1 string) (*string, error) {
+func getImageURL(ctxt context.Context, client *http.Client, username, password, imageID, text0, text1 string) (*string, error) {
 	u, err := url.Parse("http://version1.api.memegenerator.net/Instance_Create")
 	if err != nil {
 		return nil, err
@@ -195,10 +238,10 @@ func getImageURL(client *http.Client, username, password, imageID, text0, text1 
 	return nil, errors.New(fmt.Sprintf("Unable to parse response JSON - %#v", doc))
 }
 
-func NewPayload(imageURL *string) *Payload {
-	return &Payload{
+func NewPayload(imageURL *string) *payload {
+	return &payload{
 		ResponseType: "in_channel",
-		Attachments: []Attachment{
+		Attachments: []attachment{
 			{
 				Text:     *imageURL,
 				ImageURL: *imageURL,
